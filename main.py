@@ -1,12 +1,17 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-import wx
 import os
 import re
 
+try:
+	import wx
+except:
+	print "You need WXPython installed"
+	exit()
+
 config_file  = "clipman.conf"
 program_name = "Clipman"
-version      = "0.15"
+version      = "0.18"
 subname      = "Herping softly"
 name_ver_etc = "%s v%s - %s" % (program_name, version, subname)
 
@@ -33,26 +38,45 @@ class PreferencesWindow(wx.Frame):
 	def OnClose(self, event):
 		self.Destroy()
 
-def limit_size(text, max_line_length, max_lines):
+def limit_size(text, configuration):
+	maxlines = configuration.MaxLinesPerPaste
+	maxlen = configuration.MaxLineLength
+	marker = configuration.MultilineMarker
+
 	result = u""
 	lines = text.split(os.linesep)
-	for i, line in enumerate( lines ):
-		if len(line) >= max_line_length:
-			result += line[:max_line_length-3] + "..."
-		else:
-			result += line
-		if i != len(lines) - 1:
-			#if len(line) == 0:
-				#result += u"⁋"
-			#else:
-			result+= "\n"
+	def f(line):
+		return len(re.findall("[^\s]", line)) != 0
+	lines = filter(f, lines)
 
-	result.replace("\t", "")
+	if len(lines) == 0: return ""
 
-	return result
+	result += lines[0]
 
-def menu_from_iterable(menu, element_list, function_factory):
-	for element in element_list: pass
+	for i, line in enumerate(lines[1:]):
+		if i >= maxlines: break
+		if len(line) > maxlen:
+			line = "%s..." % line[:maxlen-3]
+		result += "\n%s" % line
+
+	return result.replace("\t", "    ")
+
+def menu_from_iterable(menu, element_list, function_factory, offset = 0):
+	for i in range( len(element_list) ):
+		value = element_list[i]
+		i += offset
+		item = menu.Append(wx.ID_ANY, value)
+		func = function_factory(i)
+		menu.Bind(wx.EVT_MENU, func, item)
+
+def set_clipboard(text):
+	wx.TheClipboard.Open()
+	data_object = wx.TextDataObject()
+	data_object.Text = text
+	success = wx.TheClipboard.SetData(data_object)
+	wx.TheClipboard.Close()
+
+	return success
 
 class Configuration(object):
 	def __init__(self):
@@ -66,6 +90,10 @@ class Configuration(object):
 
 		self.MaxLineLength    = 64
 		self.MaxLinesPerPaste = 2
+
+		self.SkipEmptyLines   = True
+
+		self.ClipboardSyncFrequency = 100
 
 		self.MoveFixedToTopUponSelection = True
 
@@ -88,22 +116,23 @@ class History(object):
 	def __init__(self, conf):
 		self.Current       = ""
 		self.RecentHistory = LoadableList()
-		self.FixedHistory  = LoadableList()
+		self.FixedEntries  = LoadableList()
 		self.OlderHistory  = LoadableList()
 
 		self.Configuration = conf
 	def Load(self, recent = None, fixed = None, rest = None):
 		if recent != None:
 			self.RecentHistory.FromFile(recent)
+			self.Current = self.RecentHistory[-1]
 		if fixed  != None:
-			self.FixedHistory.FromFile(fixed)
+			self.FixedEntries.FromFile(fixed)
 		if rest   != None:
 			self.OlderHistory.FromFile(rest)
 	def Save(self, recent = None, fixed = None, rest = None):
 		if recent != None:
 			self.RecentHistory.ToFile(recent)
 		if fixed  != None:
-			self.FixedHistory.ToFile(fixed)
+			self.FixedEntries.ToFile(fixed)
 		if rest   != None:
 			self.OlderHistory.ToFile(rest)
 	def Add(self, element):
@@ -123,16 +152,16 @@ class History(object):
 			del rh[ index ]
 			rh += [element]
 
-		if len(rh) > self.Configuration.MaxRecentEntries:
+		if len(rh) >= self.Configuration.MaxRecentEntries:
 			oh += rh[0]
 			del rh[0]
 
-		if len(oh) > self.Configuration.MaxOlderEntries:
+		if len(oh) >= self.Configuration.MaxOlderEntries:
 			del oh[0]
 	def AddFixed(self, element):
-		if element in self.FixedHistory: return None
+		if element in self.FixedEntries: return None
 		else:
-			self.FixedHistory += [ element ]
+			self.FixedEntries += [ element ]
 
 class LoadableList(list):
 	def ToFile(self, filename):
@@ -174,7 +203,7 @@ class ClipmanIcon(wx.TaskBarIcon):
 		self.Bind(wx.EVT_TASKBAR_LEFT_DOWN, self.OnLMBDown)
 
 		self.Timer = wx.Timer(self)
-		self.Timer.Start(100)
+		self.Timer.Start(self.Configuration.ClipboardSyncFrequency)
 		self.Bind(wx.EVT_TIMER, self.OnTimer, self.Timer)
 
 		self.History = History(self.Configuration)
@@ -222,22 +251,17 @@ class ClipmanIcon(wx.TaskBarIcon):
 
 	def ChooseItem(self, index):
 		rh = self.History.RecentHistory
+		index = len(rh) - index - 2
 
-		wx.TheClipboard.Open()
-		data_object = wx.TextDataObject()
-		data_object.Text = rh[index]
-		success = wx.TheClipboard.SetData(data_object)
-		wx.TheClipboard.Close()
+		set_clipboard( rh[index] )
 
 		del rh[index]
 	def ChooseFixedItem(self, index):
-		fh = self.History.FixedHistory
+		fh = self.History.FixedEntries
 
-		wx.TheClipboard.Open()
-		data_object = wx.TextDataObject()
-		data_object.Text = fh[index]
-		success = wx.TheClipboard.SetData(data_object)
-		wx.TheClipboard.Close()
+		index = len(fh) - index - 1
+
+		set_clipboard( fh[index] )
 
 		if self.Configuration.MoveFixedToTopUponSelection:
 			item = fh[index]
@@ -266,55 +290,56 @@ class ClipmanIcon(wx.TaskBarIcon):
 
 		item_exit  = menu.Append(wx.ID_EXIT, 'Exit', 'Exit!')
 		menu.Bind(wx.EVT_MENU, self.MenuExit, item_exit)
+
 		return menu
 
 	def CreateHistoryMenu(self):
 		menu = wx.Menu()
 
+		conf = self.Configuration
+
 		rh = self.History.RecentHistory
-		fh = self.History.FixedHistory
+		fh = self.History.FixedEntries
 
-		for i, h_item in enumerate( reversed(rh) ):
-			if i == 0: item_id = wx.ID_FORWARD
-			else:      item_id = wx.ID_ANY
+		limiter = lambda item, c=conf: limit_size(item, c)
 
-			h_item = limit_size( h_item, self.Configuration.MaxLineLength, self.Configuration.MaxLinesPerPaste )
-			i = len(rh) - i - 1
+		rh2 = map(limiter, reversed(rh))
 
-			item = menu.Append(item_id, h_item)
-			func = lambda e, i = i: self.ChooseItem(i)
+		def FuncFactory(i, self = self):
+			return lambda e, i=i: self.ChooseItem(i)
 
-			menu.Bind(wx.EVT_MENU, func, item)
+		current = menu.Append(wx.ID_FORWARD, limiter(self.History.Current) )
+		menu.Bind(wx.EVT_MENU, FuncFactory(0), current)
+
+		menu_from_iterable(menu, rh2[1:], FuncFactory)
 
 		menu.AppendSeparator()
-		fix = menu.Append(wx.ID_ADD, self.History.Current)
+		fix = menu.Append(wx.ID_ADD, limiter(self.History.Current))
 		self.Bind(wx.EVT_MENU, self.AddFixed, fix)
 
 		if len(fh) > 0:
-			fl = self.Configuration.MaxFixedEntries
-			for i in range( min(fl, len(fh)) ):
-				h_item = fh[i]
-				h_item = limit_size( h_item, self.Configuration.MaxLineLength, self.Configuration.MaxLinesPerPaste )
+			fl = conf.MaxFixedEntries
+			fh2 = map(limiter, reversed(fh))
+			if len(fh2) > fl:
+				fh2a = fh2[:fl]
+				fh2b = fh2[fl:]
+			else:
+				fh2a = fh2
+				fh2b = []
 
-				item = menu.Append(wx.ID_ANY, h_item)
-				func = lambda e, i = i: self.ChooseFixedItem(i)
+			def FuncFactory(i, self = self):
+				return lambda e, i=i: self.ChooseFixedItem(i)
 
-				menu.Bind(wx.EVT_MENU, func, item)
-			if len(fh) > fl:
+			menu_from_iterable(menu, fh2a, FuncFactory)
+			if fh2b != [ ]:
 				fixed_submenu = wx.Menu()
-				for i in range(fl, len(fh)):
-					h_item = fh[i]
-					h_item = limit_size( h_item, self.Configuration.MaxLineLength, self.Configuration.MaxLinesPerPaste )
-
-					item = fixed_submenu.Append(wx.ID_ANY, h_item)
-					func = lambda e, i = i: self.ChooseFixedItem(i)
-
-					menu.Bind(wx.EVT_MENU, func, item)
+				menu_from_iterable(fixed_submenu, fh2b, FuncFactory, fl)
 				menu.AppendMenu(wx.ID_MORE, "More", fixed_submenu)
 
 		menu.AppendSeparator()
 
 		clear = menu.Append(wx.ID_CLEAR, "Clear")
+
 		menu.Bind(wx.EVT_MENU, self.ClearRecent, clear)
 
 		return menu
