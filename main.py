@@ -41,7 +41,6 @@ class PreferencesWindow(wx.Frame):
 def limit_size(text, configuration):
 	maxlines = configuration.MaxLinesPerPaste
 	maxlen = configuration.MaxLineLength
-	marker = configuration.MultilineMarker
 
 	result = u""
 	lines = text.split(os.linesep)
@@ -54,7 +53,9 @@ def limit_size(text, configuration):
 	result += lines[0]
 
 	for i, line in enumerate(lines[1:]):
-		if i >= maxlines: break
+		if i >= maxlines:
+			result+="\n. . ."
+			break
 		if len(line) > maxlen:
 			line = "%s..." % line[:maxlen-3]
 		result += "\n%s" % line
@@ -83,10 +84,12 @@ class Configuration(object):
 		self.Icon = "icon.png"
 		self.RecentHistoryFile = "recent.history"
 		self.FixedEntriesFile  = "fixed.history"
+		self.CategoryExtension = ".list"
 
 		self.MaxRecentEntries  = 15
 		self.MaxFixedEntries   = 5
 		self.MaxOlderEntries   = 35
+		self.MaxCategories     = 5
 
 		self.MaxLineLength    = 64
 		self.MaxLinesPerPaste = 2
@@ -96,6 +99,9 @@ class Configuration(object):
 		self.ClipboardSyncFrequency = 100
 
 		self.MoveFixedToTopUponSelection = True
+		self.MoveCategoryToTopUponSelection = False
+
+		self.AlwaysShowFixedEditButton = True
 
 	def FromFile(self, filename):
 		try:
@@ -119,15 +125,25 @@ class History(object):
 		self.FixedEntries  = LoadableList()
 		self.OlderHistory  = LoadableList()
 
+		self.Categories    = {  }
+
 		self.Configuration = conf
 	def Load(self, recent = None, fixed = None, rest = None):
 		if recent != None:
 			self.RecentHistory.FromFile(recent)
-			self.Current = self.RecentHistory[-1]
+			if len(self.RecentHistory) > 0:
+				self.Current = self.RecentHistory[-1]
 		if fixed  != None:
 			self.FixedEntries.FromFile(fixed)
 		if rest   != None:
 			self.OlderHistory.FromFile(rest)
+		listing = os.listdir(os.curdir)
+		ext = self.Configuration.CategoryExtension
+		condition = lambda i: i.endswith(ext)
+		for filename in filter(condition, listing):
+			key = filename[:len(ext)]
+			self.Categories[key] = LoadableList()
+			self.Categories[key].FromFile(filename)
 	def Save(self, recent = None, fixed = None, rest = None):
 		if recent != None:
 			self.RecentHistory.ToFile(recent)
@@ -135,6 +151,11 @@ class History(object):
 			self.FixedEntries.ToFile(fixed)
 		if rest   != None:
 			self.OlderHistory.ToFile(rest)
+
+		ext = self.Configuration.CategoryExtension
+		for key in self.Categories:
+			self.Categories[key].ToFile(key + ext)
+
 	def Add(self, element):
 		self.Current = element
 
@@ -174,6 +195,7 @@ class LoadableList(list):
 			return None
 
 		for item in self.__iter__():
+			item = item.replace(u"\\", u"\\\\")
 			item = item.replace(os.linesep, u"\\n")
 			data = "%s%s" % (item, os.linesep)
 			data = data.encode('utf-8')
@@ -186,9 +208,12 @@ class LoadableList(list):
 			return None #It's not a big deal. First run perhaps.
 
 		for line in f.readlines():
+			def rep(m):
+				return m.group(1) + "\n"
 			line = line.decode('utf-8')
 			line = line.replace(os.linesep, u"")
-			line = line.replace(u"\\n", os.linesep)
+			line = re.sub(r"([^\\])\\n", rep, line)
+			line = line.replace("\\\\", "\\")
 			self.__iadd__( [line] )
 
 class ClipmanIcon(wx.TaskBarIcon):
@@ -249,9 +274,14 @@ class ClipmanIcon(wx.TaskBarIcon):
 	def UpdateIcon(self):
 		self.SetIcon(self.Icon, "Derpo derpo")
 
+	def ChooseCategoryItem(self, category, index):
+		cat = self.History.Categories[category]
+		index = len(cat) - index - 1
+		set_clipboard( cat[index] )
+
 	def ChooseItem(self, index):
 		rh = self.History.RecentHistory
-		index = len(rh) - index - 2
+		index = len(rh) - index - 1
 
 		set_clipboard( rh[index] )
 
@@ -269,7 +299,7 @@ class ClipmanIcon(wx.TaskBarIcon):
 			fh += [ item ]
 
 	def ClearRecent(self, event):
-		self.RecentHistory = []
+		del self.History.RecentHistory[:-1]
 		self.OnTimer(None)
 
 	def CreatePopupMenu(self):
@@ -311,7 +341,7 @@ class ClipmanIcon(wx.TaskBarIcon):
 		current = menu.Append(wx.ID_FORWARD, limiter(self.History.Current) )
 		menu.Bind(wx.EVT_MENU, FuncFactory(0), current)
 
-		menu_from_iterable(menu, rh2[1:], FuncFactory)
+		menu_from_iterable(menu, rh2[1:], FuncFactory, 1)
 
 		menu.AppendSeparator()
 		fix = menu.Append(wx.ID_ADD, limiter(self.History.Current))
