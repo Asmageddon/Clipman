@@ -3,6 +3,8 @@
 import os
 import re
 
+from ConfigureCategoryFrame import ConfigureCategoryFrame
+
 try:
 	import wx
 except:
@@ -14,29 +16,6 @@ program_name = "Clipman"
 version      = "0.18"
 subname      = "Herping softly"
 name_ver_etc = "%s v%s - %s" % (program_name, version, subname)
-
-class PreferencesWindow(wx.Frame):
-	def __init__(self, parent):
-		self.ClipmanIcon = parent
-		wx.Frame.__init__(self, None, size=(320,320), title="Preferences")
-		tabs = wx.Notebook(self)
-
-		pan = wx.Panel(tabs)
-		tabs.AddPage(pan, "General")
-
-		vbox = wx.BoxSizer(wx.VERTICAL)
-
-		button = wx.Button(pan, label="herpo")
-		vbox.Add(button, 1)
-		button2 = wx.Button(pan, label="derpo")
-		vbox.Add(button2, 1)
-
-		pan.SetSizer(vbox)
-
-		self.Bind(wx.EVT_CLOSE, self.OnClose)
-
-	def OnClose(self, event):
-		self.Destroy()
 
 def limit_size(text, configuration):
 	maxlines = configuration.MaxLinesPerPaste
@@ -50,7 +29,10 @@ def limit_size(text, configuration):
 
 	if len(lines) == 0: return ""
 
-	result += lines[0]
+	if len(lines[0]) > maxlen:
+		result += "%s..." % lines[0][:maxlen-3]
+	else:
+		result += lines[0]
 
 	for i, line in enumerate(lines[1:]):
 		if i >= maxlines:
@@ -83,11 +65,10 @@ class Configuration(object):
 	def __init__(self):
 		self.Icon = "icon.png"
 		self.RecentHistoryFile = "recent.history"
-		self.FixedEntriesFile  = "fixed.history"
-		self.CategoryExtension = ".list"
+		self.CategoriesFile    = "fixed.categories"
+		self.CategoriesExtension = ".list"
 
 		self.MaxRecentEntries  = 15
-		self.MaxFixedEntries   = 5
 		self.MaxOlderEntries   = 35
 		self.MaxCategories     = 5
 
@@ -122,39 +103,33 @@ class History(object):
 	def __init__(self, conf):
 		self.Current       = ""
 		self.RecentHistory = LoadableList()
-		self.FixedEntries  = LoadableList()
-		self.OlderHistory  = LoadableList()
+		self.OlderHistory = LoadableList()
 
+		self.CategoryList  = LoadableList()
 		self.Categories    = {  }
 
 		self.Configuration = conf
-	def Load(self, recent = None, fixed = None, rest = None):
-		if recent != None:
-			self.RecentHistory.FromFile(recent)
-			if len(self.RecentHistory) > 0:
-				self.Current = self.RecentHistory[-1]
-		if fixed  != None:
-			self.FixedEntries.FromFile(fixed)
-		if rest   != None:
-			self.OlderHistory.FromFile(rest)
-		listing = os.listdir(os.curdir)
-		ext = self.Configuration.CategoryExtension
-		condition = lambda i: i.endswith(ext)
-		for filename in filter(condition, listing):
-			key = filename[:len(ext)]
-			self.Categories[key] = LoadableList()
-			self.Categories[key].FromFile(filename)
-	def Save(self, recent = None, fixed = None, rest = None):
-		if recent != None:
-			self.RecentHistory.ToFile(recent)
-		if fixed  != None:
-			self.FixedEntries.ToFile(fixed)
-		if rest   != None:
-			self.OlderHistory.ToFile(rest)
+	def Load(self):
+		self.RecentHistory.FromFile(self.Configuration.RecentHistoryFile)
+		if len(self.RecentHistory) > 0:
+			self.Current = self.RecentHistory[-1]
 
-		ext = self.Configuration.CategoryExtension
-		for key in self.Categories:
-			self.Categories[key].ToFile(key + ext)
+		self.CategoryList.FromFile(self.Configuration.CategoriesFile)
+
+		ext = self.Configuration.CategoriesExtension
+		for cat in self.CategoryList:
+			self.Categories[cat] = LoadableList()
+			self.Categories[cat].FromFile("%s%s" % (cat, ext) )
+
+
+	def Save(self):
+		self.RecentHistory.ToFile(self.Configuration.RecentHistoryFile)
+
+		self.CategoryList.ToFile(self.Configuration.CategoriesFile)
+
+		ext = self.Configuration.CategoriesExtension
+		for cat in self.CategoryList:
+			self.Categories[cat].ToFile("%s%s" % (cat, ext) )
 
 	def Add(self, element):
 		self.Current = element
@@ -179,10 +154,11 @@ class History(object):
 
 		if len(oh) >= self.Configuration.MaxOlderEntries:
 			del oh[0]
-	def AddFixed(self, element):
-		if element in self.FixedEntries: return None
+	def AddFixed(self, category, element):
+		c = self.Categories[category]
+		if element in c: return None
 		else:
-			self.FixedEntries += [ element ]
+			c += [ element ]
 
 class LoadableList(list):
 	def ToFile(self, filename):
@@ -232,8 +208,7 @@ class ClipmanIcon(wx.TaskBarIcon):
 		self.Bind(wx.EVT_TIMER, self.OnTimer, self.Timer)
 
 		self.History = History(self.Configuration)
-		self.History.Load(recent = self.Configuration.RecentHistoryFile)
-		self.History.Load(fixed  = self.Configuration.FixedEntriesFile )
+		self.History.Load()
 
 	def OnTimer(self, event):
 		wx.TheClipboard.Open()
@@ -248,8 +223,7 @@ class ClipmanIcon(wx.TaskBarIcon):
 
 	def MenuExit(self, event):
 		self.Configuration.ToFile(config_file)
-		self.History.Save(recent = self.Configuration.RecentHistoryFile)
-		self.History.Save(fixed  = self.Configuration.FixedEntriesFile )
+		self.History.Save()
 
 		self.Timer.Destroy()
 		wx.CallAfter(self.Destroy)
@@ -286,8 +260,8 @@ class ClipmanIcon(wx.TaskBarIcon):
 		set_clipboard( rh[index] )
 
 		del rh[index]
-	def ChooseFixedItem(self, index):
-		fh = self.History.FixedEntries
+	def ChooseFixedItem(self, category, index):
+		fh = self.History.Categories[category]
 
 		index = len(fh) - index - 1
 
@@ -323,13 +297,19 @@ class ClipmanIcon(wx.TaskBarIcon):
 
 		return menu
 
+	def ConfigureCategory(self, category):
+		print "Configuring %s" % category
+		conf = self.Configuration
+		cat  = self.History.Categories[category]
+		frame = ConfigureCategoryFrame(None, category = cat, configuration = conf)
+		frame.Show()
+
 	def CreateHistoryMenu(self):
 		menu = wx.Menu()
 
 		conf = self.Configuration
 
 		rh = self.History.RecentHistory
-		fh = self.History.FixedEntries
 
 		limiter = lambda item, c=conf: limit_size(item, c)
 
@@ -344,27 +324,36 @@ class ClipmanIcon(wx.TaskBarIcon):
 		menu_from_iterable(menu, rh2[1:], FuncFactory, 1)
 
 		menu.AppendSeparator()
-		fix = menu.Append(wx.ID_ADD, limiter(self.History.Current))
-		self.Bind(wx.EVT_MENU, self.AddFixed, fix)
 
-		if len(fh) > 0:
-			fl = conf.MaxFixedEntries
-			fh2 = map(limiter, reversed(fh))
-			if len(fh2) > fl:
-				fh2a = fh2[:fl]
-				fh2b = fh2[fl:]
-			else:
-				fh2a = fh2
-				fh2b = []
+		fix = menu.Append(wx.ID_ANY, "Fixed entries")
+		fix.Enable(False)
 
-			def FuncFactory(i, self = self):
-				return lambda e, i=i: self.ChooseFixedItem(i)
+		for cat in self.History.CategoryList:
+			submenu = wx.Menu()
 
-			menu_from_iterable(menu, fh2a, FuncFactory)
-			if fh2b != [ ]:
-				fixed_submenu = wx.Menu()
-				menu_from_iterable(fixed_submenu, fh2b, FuncFactory, fl)
-				menu.AppendMenu(wx.ID_MORE, "More", fixed_submenu)
+			def FuncFactory(i, self = self, cat = cat):
+				return lambda e, i=i, cat = cat: self.ChooseFixedItem(cat, i)
+			def AddFuncFactory(self = self, cat = cat):
+				return lambda e, cat = cat: self.AddFixed(cat)
+			def ConfigureFuncFactory(self = self, cat = cat):
+				return lambda e, cat = cat: self.ConfigureCategory(cat)
+
+			curtext = limit_size(self.History.Current, self.Configuration)
+			curtext = curtext.split('\n')[0]
+			add = submenu.Append(wx.ID_ADD, 'Add "%s"' % curtext)
+			submenu.Bind(wx.EVT_MENU, AddFuncFactory(), add)
+
+			cc = self.History.Categories[cat]
+			cc = map(limiter, reversed(cc))
+
+			menu_from_iterable(submenu, cc, FuncFactory)
+
+			submenu.AppendSeparator()
+
+			configure = submenu.Append(wx.ID_PREFERENCES, 'Configure "%s"' % cat)
+			submenu.Bind(wx.EVT_MENU, ConfigureFuncFactory(), configure)
+
+			menu.AppendMenu(wx.ID_ANY, cat, submenu)
 
 		menu.AppendSeparator()
 
@@ -374,8 +363,8 @@ class ClipmanIcon(wx.TaskBarIcon):
 
 		return menu
 
-	def AddFixed(self, event):
-		self.History.AddFixed(self.History.Current)
+	def AddFixed(self, category):
+		self.History.AddFixed(category, self.History.Current)
 
 class ClipmanApp(wx.App):
 	def __init__(self):
