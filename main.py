@@ -17,6 +17,47 @@ version      = "0.18"
 subname      = "Herping softly"
 name_ver_etc = "%s v%s - %s" % (program_name, version, subname)
 
+def escape(string):
+	string = string.replace(u"\\", u"\\\\")
+	string = string.replace(os.linesep, u"\\n")
+	return string
+
+def unescape(string):
+	def rep(m):
+		return m.group(1) + "\n"
+	string = string.replace(os.linesep, u"")
+	string = re.sub(r"([^\\])\\n", rep, string)
+	string = string.replace("\\\\", "\\")
+	return string
+
+class SaveableClass(object):
+	def FromFile(self, filename):
+		try:
+			f = open(filename, 'r')
+		except:
+			return None
+		for line in f.readlines():
+			variable, value = re.split("\s*=\s*", line)
+			self.__dict__[variable] = eval(value)
+
+	def ToFile(self, filename):
+		f = open(filename, 'w')
+		for item in self.__dict__:
+			if type(item) not in [dict, list, int, float, str, unicode, bool]:
+				#We're skipping anything aside from properties
+				continue
+			value = self.__dict__[item]
+			f.write( "%s = %s%s" % (item, repr(value), os.linesep) )
+
+class Category(SaveableClass):
+	def __init__(self):
+		self.RegexCapture   = False
+		self.CapturePattern = ""
+		self.LimitEntries   = False
+		self.MaxEntryCount  = 35
+
+		self.Entries = LoadableList()
+
 def limit_size(text, configuration):
 	maxlines = configuration.MaxLinesPerPaste
 	maxlen = configuration.MaxLineLength
@@ -61,7 +102,7 @@ def set_clipboard(text):
 
 	return success
 
-class Configuration(object):
+class Configuration(SaveableClass):
 	def __init__(self):
 		self.Icon = "icon.png"
 		self.RecentHistoryFile = "recent.history"
@@ -83,21 +124,6 @@ class Configuration(object):
 		self.MoveCategoryToTopUponSelection = False
 
 		self.AlwaysShowFixedEditButton = True
-
-	def FromFile(self, filename):
-		try:
-			f = open(filename, 'r')
-		except:
-			return None
-		for line in f.readlines():
-			variable, value = re.split("\s*=\s*", line)
-			self.__dict__[variable] = eval(value)
-
-	def ToFile(self, filename):
-		f = open(filename, 'w')
-		for item in self.__dict__:
-			value = self.__dict__[item]
-			f.write( "%s = %s%s" % (item, repr(value), os.linesep) )
 
 class History(object):
 	def __init__(self, conf):
@@ -165,14 +191,10 @@ class LoadableList(list):
 		try:
 			f = open(filename, 'w')
 		except:
-			dialog = wx.MessageDialog(self, "Couldn't save history to a file, sorry.", "Error", wx.OK)
-			dialog.ShowModal()
-			dialog.Destroy()
 			return None
 
 		for item in self.__iter__():
-			item = item.replace(u"\\", u"\\\\")
-			item = item.replace(os.linesep, u"\\n")
+			item = escape(item)
 			data = "%s%s" % (item, os.linesep)
 			data = data.encode('utf-8')
 			f.write(data)
@@ -184,12 +206,8 @@ class LoadableList(list):
 			return None #It's not a big deal. First run perhaps.
 
 		for line in f.readlines():
-			def rep(m):
-				return m.group(1) + "\n"
 			line = line.decode('utf-8')
-			line = line.replace(os.linesep, u"")
-			line = re.sub(r"([^\\])\\n", rep, line)
-			line = line.replace("\\\\", "\\")
+			line = unescape(line)
 			self.__iadd__( [line] )
 
 class ClipmanIcon(wx.TaskBarIcon):

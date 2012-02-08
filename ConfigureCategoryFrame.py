@@ -19,6 +19,7 @@ class ConfigureCategoryFrame(wx.Frame):
 		wx.Frame.__init__(self, *args, **kwargs)
 		self.ItemList = wx.ListCtrl(self, -1, style=wx.LC_REPORT | wx.SUNKEN_BORDER)
 		self.NewItem = wx.Button(self, wx.ID_NEW, "")
+		#self.ItemTop = wx.Button(self, wx.ID_HIGHEST, "")
 		self.ItemUp = wx.Button(self, wx.ID_UP, "")
 		self.ItemDown = wx.Button(self, wx.ID_DOWN, "")
 		self.DeleteItem = wx.Button(self, wx.ID_DELETE, "")
@@ -38,7 +39,7 @@ class ConfigureCategoryFrame(wx.Frame):
 	def __set_properties(self):
 		# begin wxGlade: ConfigureCategoryFrame.__set_properties
 		self.SetTitle("Configure %s" % self.Category[0])
-		self.SetSize((640, 480))
+		self.SetSize((360, 400))
 		self.CapturePattern.Enable(False)
 		self.ItemLimitValue.Enable(False)
 		# end wxGlade
