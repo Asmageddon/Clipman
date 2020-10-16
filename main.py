@@ -391,6 +391,7 @@ class ClipmanApp(wx.App):
 
 try:
     app = ClipmanApp()
+    app.SetTopWindow(wx.Frame(None, -1))
     app.MainLoop()
 except KeyboardInterrupt:
     print "Received keyboard interrupt, C'ya!"
